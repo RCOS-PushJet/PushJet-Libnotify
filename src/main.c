@@ -25,8 +25,8 @@ static int jsoneq(const char *json, jsmntok_t *tok, const char *str) {
 
 int main() {
     // initial initialization
-    char* message = (char*)calloc(MSG_SIZE, 1);
-    char* JSON_STRING = (char*)calloc(MSG_SIZE, 1);
+    char* message = (char*)calloc(MSG_SIZE, sizeof(char));
+    char* JSON_STRING = (char*)calloc(MSG_SIZE, sizeof(char));
 
     // socket setup
     struct hostent *hostnm;    /* server host name information        */
