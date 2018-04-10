@@ -12,7 +12,8 @@
 #include <unistd.h>
 
 #define MSG_SIZE 2000
-#define CON_PORT 7171
+#define PORT_DEST 7171
+#define ADDR_DEST "128.113.17.41"
 
 // json string compare
 static int jsoneq(const char *json, jsmntok_t *tok, const char *str) {
@@ -23,26 +24,23 @@ static int jsoneq(const char *json, jsmntok_t *tok, const char *str) {
     return -1;
 }
 
-int main() {
-    // initial initialization
-    char* message = (char*)calloc(MSG_SIZE, sizeof(char));
-    char* JSON_STRING = (char*)calloc(MSG_SIZE, sizeof(char));
-
+/* Connect to address specified in arguments then
+ * return socket file descriptor
+ */
+int configure_socket(char* dest_addr, int dest_port){
     // socket setup
     struct hostent *hostnm;    /* server host name information        */
     struct sockaddr_in server; /* server address                      */
     int sockfd;                     /* client socket                       */
 
-    // manually specify for now
-    // is only internal so should be *safe*
-    hostnm = gethostbyname("128.113.17.41");
+    hostnm = gethostbyname(dest_addr);
     if (hostnm == (struct hostent *)0) {
         fprintf(stderr, "Gethostbyname failed\n");
         exit(2);
     }
     server.sin_family = AF_INET;
-    server.sin_port = htons(CON_PORT);
-    server.sin_addr.s_addr = *((unsigned long *)hostnm->h_addr); // linter gets mad as it doesnt understand the struct?
+    server.sin_port = htons(dest_port);
+    server.sin_addr.s_addr = *((unsigned long *)hostnm->h_addr);
 
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("Socket()");
@@ -50,7 +48,7 @@ int main() {
     }
     printf("Socket call sucessful!\n");
     printf("Socket file descriptor: %d\n", sockfd);
-    char addrString[50];
+    char addrString[18];
     inet_ntop(AF_INET, &server.sin_addr, addrString, sizeof(struct sockaddr_in));
     printf("Preparing to connect to target address - %s:%d\n", addrString, ntohs(server.sin_port));
 
@@ -66,15 +64,25 @@ int main() {
         perror("Connect()");
         exit(4);
     }
+    printf("Connection successful, returning socket file descriptor! \n");
+    return sockfd;
+}
 
-    puts("Connection successful\n");
 
-    // this can go on github right?
-    // to gen another
-    // use python for now
-    //
-    // from uuid import uuid4
-    // device_id = str(uuid4())
+
+int main() {
+    // initial initialization
+    char* message = (char*)calloc(MSG_SIZE, sizeof(char));
+    char* JSON_STRING = (char*)calloc(MSG_SIZE, sizeof(char));
+
+    /* Configure and connect to specified address */
+    int sockfd = configure_socket(ADDR_DEST, PORT_DEST);
+
+    /* this can go on github right?
+     * to gen another use python for now:
+     * from uuid import uuid4
+     * device_id = str(uuid4()) 
+     */
     char *uuid = "585f9168-1b9a-4bee-9a78-89fb5714aca7";
     if (send(sockfd, uuid, 36, 0) < 0) {
         perror("Send failed");
@@ -94,7 +102,11 @@ int main() {
             }
         }
 
+        printf("Recieved %d bytes : \n", bytes_recvd);
+        printf("--- MSG ---\n");
         puts(JSON_STRING);
+        printf("-----------\n");
+
 
         // check magic bytes
         if (JSON_STRING[0] != 0x2) {
@@ -115,71 +127,78 @@ int main() {
 
         // json setup
         int index;
-        int toks;
+        int tokenCount;
         jsmn_parser p;
-        jsmntok_t t[128]; /* We expect no more than 128 tokens */
+        jsmntok_t tokens[128]; /* We expect no more than 128 tokens */
 
         jsmn_init(&p);
-        toks = jsmn_parse(&p, JSON_STRING, strlen(JSON_STRING), t,
-                       sizeof(t) / sizeof(t[0]));
-        if (toks < 0) {
-            printf("Failed to parse JSON: %d\n", toks);
+        tokenCount = jsmn_parse(&p, JSON_STRING, strlen(JSON_STRING), tokens,
+                       sizeof(tokens) / sizeof(tokens[0]));
+        if (tokenCount < 0) {
+            printf("Failed to parse JSON: %d\n", tokenCount);
             return 1;
         }
 
         /* Assume the top-level element is an object */
-        if (toks < 1 || t[0].type != JSMN_OBJECT) {
+        if (tokenCount < 1 || tokens[0].type != JSMN_OBJECT) {
             printf("Object expected\n");
             return 1;
         }
 
         /* Loop over all keys of the root object */
-        for (index = 1; index < toks; index++) {
-            if (jsoneq(JSON_STRING, &t[index], "user") == 0) {
+        for (index = 1; index < tokenCount; index++) {
+            if (jsoneq(JSON_STRING, &tokens[index], "user") == 0) {
                 /* We may use strndup() to fetch string value */
-                printf("- User: %.*s\n", t[index + 1].end - t[index + 1].start,
-                       JSON_STRING + t[index + 1].start);
+                printf("- User: %.*s\n", tokens[index + 1].end - tokens[index + 1].start,
+                       JSON_STRING + tokens[index + 1].start);
                 index++;
-            } else if (jsoneq(JSON_STRING, &t[index], "message") == 0) {
+
+            } else if (jsoneq(JSON_STRING, &tokens[index], "message") == 0) {
                 /* We may additionally check if the value is either "true" or
                  * "false" */
-                printf("- message: %.*s\n", t[index + 1].end - t[index + 1].start,
-                       JSON_STRING + t[index + 1].start);
+                printf("- message: %.*s\n", tokens[index + 1].end - tokens[index + 1].start,
+                       JSON_STRING + tokens[index + 1].start);
                 index++;
-            } else if (jsoneq(JSON_STRING, &t[index], "status") == 0) {
+
+            } else if (jsoneq(JSON_STRING, &tokens[index], "status") == 0) {
                 /* We may additionally check if the value is either "true" or
                  * "false" */
-                printf("- status: %.*s\n", t[index + 1].end - t[index + 1].start,
-                       JSON_STRING + t[index + 1].start);
-                if (strncmp("ok", JSON_STRING + t[index + 1].start,
-                            t[index + 1].end - t[index + 1].start) == 0) {
+                printf("- status: %.*s\n", tokens[index + 1].end - tokens[index + 1].start,
+                       JSON_STRING + tokens[index + 1].start);
+                if (strncmp("ok", JSON_STRING + tokens[index + 1].start,
+                            tokens[index + 1].end - tokens[index + 1].start) == 0) {
+                    printf("Got status OK message!\n");
+                    // Maybe send notifcation on screen giving status update
                 } else {
-                    dprintf(2, "%.*s\n", t[index + 1].end - t[index + 1].start,
-                            JSON_STRING + t[index + 1].start);
+                    dprintf(2, "%.*s\n", tokens[index + 1].end - tokens[index + 1].start,
+                            JSON_STRING + tokens[index + 1].start);
                     printf("status not ok\n");
                     return -1;
                 }
                 index++;
-            } else if (jsoneq(JSON_STRING, &t[index], "title") == 0) {
+
+            } else if (jsoneq(JSON_STRING, &tokens[index], "title") == 0) {
                 /* We may want to do strtol() here to get numeric value */
-                printf("- Title: %.*s\n", t[index + 1].end - t[index + 1].start,
-                       JSON_STRING + t[index + 1].start);
+                printf("- Title: %.*s\n", tokens[index + 1].end - tokens[index + 1].start,
+                       JSON_STRING + tokens[index + 1].start);
                 index++;
-            } else if (jsoneq(JSON_STRING, &t[index], "groups") == 0) {
+
+            } else if (jsoneq(JSON_STRING, &tokens[index], "groups") == 0) {
                 int j;
                 printf("- Groups:\n");
-                if (t[index + 1].type != JSMN_ARRAY) {
+                if (tokens[index + 1].type != JSMN_ARRAY) {
                     continue; /* We expect groups to be an array of strings */
                 }
-                for (j = 0; j < t[index + 1].size; j++) {
-                    jsmntok_t *g = &t[index + j + 2];
+                for (j = 0; j < tokens[index + 1].size; j++) {
+                    jsmntok_t *g = &tokens[index + j + 2];
                     printf("  * %.*s\n", g->end - g->start,
                            JSON_STRING + g->start);
                 }
-                index += t[index + 1].size + 1;
+                index += tokens[index + 1].size + 1;
+
             } else {
-                printf("Unexpected key: %.*s\n", t[index].end - t[index].start,
-                       JSON_STRING + t[index].start);
+                printf("Unexpected key: %.*s\n", tokens[index].end - tokens[index].start,
+                       JSON_STRING + tokens[index].start);
             }
         }
     }
