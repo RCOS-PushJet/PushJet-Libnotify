@@ -87,7 +87,7 @@ int main() {
         // Receive a reply from the server
     recv:
         printf("Listening\n");
-        if ((bytes_recvd = recv(sockfd, JSON_STRING, 2000, 0)) < 0) {
+        if ((bytes_recvd = recv(sockfd, JSON_STRING, MSG_SIZE, 0)) < 0) {
             printf("bytes_recvd INSIDE%d\n", bytes_recvd);
             if (errno != EAGAIN || errno != EWOULDBLOCK) {
                 break;
